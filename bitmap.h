@@ -57,8 +57,10 @@ static inline uint32_t get_free_blocks(struct super_block *sb, uint32_t len)
         bh = sb_bread(sb, ret + i);
         if (!bh) {
             pr_err("get_free_blocks: sb_bread failed for block %d\n", ret + i);
+            /* Restore all len blocks - bitmap was cleared atomically */
+            bitmap_set(sbi->bfree_bitmap, ret, len);
             sbi->nr_free_blocks += len;
-            return -EIO;
+            return 0; /* Return 0 to indicate failure (0 is reserved) */
         }
         memset(bh->b_data, 0, SIMPLEFS_BLOCK_SIZE);
         mark_buffer_dirty(bh);

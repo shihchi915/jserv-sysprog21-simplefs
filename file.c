@@ -113,35 +113,19 @@ static int simplefs_writepage(struct page *page, struct writeback_control *wbc)
  * the data into the page cache. This function checks if the write operation
  * can complete and allocates the necessary blocks through block_write_begin().
  */
-#if SIMPLEFS_AT_LEAST(6, 12, 0)
-static int simplefs_write_begin(struct file *file,
+#if SIMPLEFS_AT_LEAST(6, 15, 0)
+static int simplefs_write_begin(const struct kiocb *iocb,
                                 struct address_space *mapping,
                                 loff_t pos,
                                 unsigned int len,
                                 struct folio **foliop,
                                 void **fsdata)
-#elif SIMPLEFS_AT_LEAST(5, 19, 0)
-static int simplefs_write_begin(struct file *file,
-                                struct address_space *mapping,
-                                loff_t pos,
-                                unsigned int len,
-                                struct page **pagep,
-                                void **fsdata)
-#else
-static int simplefs_write_begin(struct file *file,
-                                struct address_space *mapping,
-                                loff_t pos,
-                                unsigned int len,
-                                unsigned int flags,
-                                struct page **pagep,
-                                void **fsdata)
-#endif
 {
+    struct file *file = iocb->ki_filp;
     struct simplefs_sb_info *sbi = SIMPLEFS_SB(file->f_inode->i_sb);
     int err;
     uint32_t nr_allocs = 0;
 
-    /* Check if the write can be completed (enough space?) */
     if (pos + len > SIMPLEFS_MAX_FILESIZE)
         return -ENOSPC;
 
@@ -153,26 +137,114 @@ static int simplefs_write_begin(struct file *file,
     if (nr_allocs > sbi->nr_free_blocks)
         return -ENOSPC;
 
-        /* prepare the write */
-#if SIMPLEFS_AT_LEAST(6, 12, 0)
     err = block_write_begin(mapping, pos, len, foliop, simplefs_file_get_block);
-#elif SIMPLEFS_AT_LEAST(5, 19, 0)
-    err = block_write_begin(mapping, pos, len, pagep, simplefs_file_get_block);
-#else
-    err = block_write_begin(mapping, pos, len, flags, pagep,
-                            simplefs_file_get_block);
-#endif
-    /* if this failed, reclaim newly allocated blocks */
     if (err < 0)
         pr_err("newly allocated blocks reclaim not implemented yet\n");
     return err;
 }
+#elif SIMPLEFS_AT_LEAST(6, 12, 0)
+static int simplefs_write_begin(struct file *file,
+                                struct address_space *mapping,
+                                loff_t pos,
+                                unsigned int len,
+                                struct folio **foliop,
+                                void **fsdata)
+{
+    struct simplefs_sb_info *sbi = SIMPLEFS_SB(file->f_inode->i_sb);
+    int err;
+    uint32_t nr_allocs = 0;
+
+    if (pos + len > SIMPLEFS_MAX_FILESIZE)
+        return -ENOSPC;
+
+    nr_allocs = max(pos + len, file->f_inode->i_size) / SIMPLEFS_BLOCK_SIZE;
+    if (nr_allocs > file->f_inode->i_blocks - 1)
+        nr_allocs -= file->f_inode->i_blocks - 1;
+    else
+        nr_allocs = 0;
+    if (nr_allocs > sbi->nr_free_blocks)
+        return -ENOSPC;
+
+    err = block_write_begin(mapping, pos, len, foliop, simplefs_file_get_block);
+    if (err < 0)
+        pr_err("newly allocated blocks reclaim not implemented yet\n");
+    return err;
+}
+#elif SIMPLEFS_AT_LEAST(5, 19, 0)
+static int simplefs_write_begin(struct file *file,
+                                struct address_space *mapping,
+                                loff_t pos,
+                                unsigned int len,
+                                struct page **pagep,
+                                void **fsdata)
+{
+    struct simplefs_sb_info *sbi = SIMPLEFS_SB(file->f_inode->i_sb);
+    int err;
+    uint32_t nr_allocs = 0;
+
+    if (pos + len > SIMPLEFS_MAX_FILESIZE)
+        return -ENOSPC;
+
+    nr_allocs = max(pos + len, file->f_inode->i_size) / SIMPLEFS_BLOCK_SIZE;
+    if (nr_allocs > file->f_inode->i_blocks - 1)
+        nr_allocs -= file->f_inode->i_blocks - 1;
+    else
+        nr_allocs = 0;
+    if (nr_allocs > sbi->nr_free_blocks)
+        return -ENOSPC;
+
+    err = block_write_begin(mapping, pos, len, pagep, simplefs_file_get_block);
+    if (err < 0)
+        pr_err("newly allocated blocks reclaim not implemented yet\n");
+    return err;
+}
+#else
+static int simplefs_write_begin(struct file *file,
+                                struct address_space *mapping,
+                                loff_t pos,
+                                unsigned int len,
+                                unsigned int flags,
+                                struct page **pagep,
+                                void **fsdata)
+{
+    struct simplefs_sb_info *sbi = SIMPLEFS_SB(file->f_inode->i_sb);
+    int err;
+    uint32_t nr_allocs = 0;
+
+    if (pos + len > SIMPLEFS_MAX_FILESIZE)
+        return -ENOSPC;
+
+    nr_allocs = max(pos + len, file->f_inode->i_size) / SIMPLEFS_BLOCK_SIZE;
+    if (nr_allocs > file->f_inode->i_blocks - 1)
+        nr_allocs -= file->f_inode->i_blocks - 1;
+    else
+        nr_allocs = 0;
+    if (nr_allocs > sbi->nr_free_blocks)
+        return -ENOSPC;
+
+    err = block_write_begin(mapping, pos, len, flags, pagep,
+                            simplefs_file_get_block);
+    if (err < 0)
+        pr_err("newly allocated blocks reclaim not implemented yet\n");
+    return err;
+}
+#endif
 
 /* Called by the VFS after writing data from a write() syscall to the page
  * cache. This function updates inode metadata and truncates the file if
  * necessary.
  */
-#if SIMPLEFS_AT_LEAST(6, 12, 0)
+#if SIMPLEFS_AT_LEAST(6, 15, 0)
+static int simplefs_write_end(const struct kiocb *iocb,
+                              struct address_space *mapping,
+                              loff_t pos,
+                              unsigned int len,
+                              unsigned int copied,
+                              struct folio *foliop,
+                              void *fsdata)
+{
+    struct inode *inode = iocb->ki_filp->f_inode;
+#elif SIMPLEFS_AT_LEAST(6, 12, 0)
 static int simplefs_write_end(struct file *file,
                               struct address_space *mapping,
                               loff_t pos,
@@ -180,6 +252,8 @@ static int simplefs_write_end(struct file *file,
                               unsigned int copied,
                               struct folio *foliop,
                               void *fsdata)
+{
+    struct inode *inode = file->f_inode;
 #else
 static int simplefs_write_end(struct file *file,
                               struct address_space *mapping,
@@ -188,9 +262,9 @@ static int simplefs_write_end(struct file *file,
                               unsigned int copied,
                               struct page *page,
                               void *fsdata)
-#endif
 {
     struct inode *inode = file->f_inode;
+#endif
     struct simplefs_inode_info *ci = SIMPLEFS_INODE(inode);
     struct super_block *sb = inode->i_sb;
 #if SIMPLEFS_AT_LEAST(6, 6, 0)
@@ -199,7 +273,10 @@ static int simplefs_write_end(struct file *file,
     uint32_t nr_blocks_old;
 
     /* Complete the write() */
-#if SIMPLEFS_AT_LEAST(6, 12, 0)
+#if SIMPLEFS_AT_LEAST(6, 15, 0)
+    int ret =
+        generic_write_end(iocb, mapping, pos, len, copied, foliop, fsdata);
+#elif SIMPLEFS_AT_LEAST(6, 12, 0)
     int ret =
         generic_write_end(file, mapping, pos, len, copied, foliop, fsdata);
 #else
@@ -242,9 +319,15 @@ static int simplefs_write_end(struct file *file,
         /* Read ei_block to remove unused blocks */
         bh_index = sb_bread(sb, ci->ei_block);
         if (!bh_index) {
+#if SIMPLEFS_AT_LEAST(6, 15, 0)
+            pr_err("Failed to truncate '%s'. Lost %llu blocks\n",
+                   iocb->ki_filp->f_path.dentry->d_name.name,
+                   nr_blocks_old - inode->i_blocks);
+#else
             pr_err("Failed to truncate '%s'. Lost %llu blocks\n",
                    file->f_path.dentry->d_name.name,
                    nr_blocks_old - inode->i_blocks);
+#endif
             goto end;
         }
         index = (struct simplefs_file_ei_block *) bh_index->b_data;
@@ -486,7 +569,9 @@ const struct address_space_operations simplefs_aops = {
 #else
     .readpage = simplefs_readpage,
 #endif
+#if !SIMPLEFS_AT_LEAST(6, 15, 0)
     .writepage = simplefs_writepage,
+#endif
     .write_begin = simplefs_write_begin,
     .write_end = simplefs_write_end,
 };
